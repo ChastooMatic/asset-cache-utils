@@ -1,0 +1,94 @@
+name: Asset Cache Sync
+
+on:
+  schedule:
+    # Runs once every hour at minute 14 (avoids top-of-the-hour GitHub runner queues)
+    - cron: '14 * * * *'
+  workflow_dispatch: # Allows manual testing from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  sync_manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute stealth activity generator
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # 1. MAX STEALTH DICE ROLL (~25% chance to execute on scheduled runs)
+          # Manual triggers (workflow_dispatch) bypass the roll for easy testing.
+          ROLL=$(( RANDOM % 100 ))
+          echo "Hourly Dice Roll: $ROLL (Threshold: under 25)"
+          if [ "$EVENT_NAME" = "schedule" ] && [ "$ROLL" -ge 25 ]; then
+            echo "Stealth check skipped this hour. Exiting cleanly."
+            exit 0
+          fi
+
+          # 2. HUMAN ACTIVITY DISTRIBUTION BY DAY OF WEEK
+          # date +%u returns 1 (Monday) through 7 (Sunday)
+          DOW=$(date +%u)
+          if [ "$DOW" -eq 6 ] || [ "$DOW" -eq 7 ]; then
+            # Weekends (Sat/Sun): 5 to 10 commits
+            COMMITS=$(( (RANDOM % 6) + 5 ))
+            DAY_TYPE="Weekend (High Activity)"
+          elif [ "$DOW" -eq 1 ]; then
+            # Mondays: 0 to 1 commit
+            COMMITS=$(( RANDOM % 2 ))
+            DAY_TYPE="Monday (Minimal Activity)"
+          else
+            # Tue-Fri: 2 to 5 commits
+            COMMITS=$(( (RANDOM % 4) + 2 ))
+            DAY_TYPE="Weekday (Moderate Activity)"
+          fi
+
+          echo "Day Schedule: $DAY_TYPE | Target Commits: $COMMITS"
+
+          if [ "$COMMITS" -eq 0 ]; then
+            echo "0 commits rolled for this session. Exiting cleanly."
+            exit 0
+          fi
+
+          # 3. CONFIGURE GIT CREDENTIALS
+          git config --local user.name "ChastooMatic"
+          git config --local user.email "liveffgaminggaming@gmail.com"
+
+          # 4. PREPARE HIDDEN TARGET DIRECTORY
+          TARGET_DIR="assets/icons"
+          TARGET_FILE="$TARGET_DIR/cache_manifest.txt"
+          mkdir -p "$TARGET_DIR"
+
+          # Plausible commit messages to blend into commit history
+          MESSAGES=(
+            "chore(assets): refresh icon cache manifest"
+            "build(icons): update static asset checksums"
+            "chore(cache): sync svg sprite digest"
+            "perf(assets): prune stale icon manifest entries"
+            "chore(manifest): regenerate cache revision token"
+          )
+
+          # 5. GENERATE COMMITS WITH JITTER
+          for (( i=1; i<=COMMITS; i++ )); do
+            TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            HASH=$( echo "$TIMESTAMP-$RANDOM-$i" | sha256sum | head -c 16 )
+
+            # Keep the manifest file compact (last 50 entries max) so repo size never bloats
+            echo "rev=$HASH | ts=$TIMESTAMP | node=$i" >> "$TARGET_FILE"
+            tail -n 50 "$TARGET_FILE" > "$TARGET_FILE.tmp" && mv "$TARGET_FILE.tmp" "$TARGET_FILE"
+
+            MSG_INDEX=$(( RANDOM % ${#MESSAGES[@]} ))
+            COMMIT_MSG="${MESSAGES[$MSG_INDEX]} [$HASH]"
+
+            git add "$TARGET_FILE"
+            git commit -m "$COMMIT_MSG"
+
+            # Brief pause between commits so timestamps are distinct
+            sleep $(( (RANDOM % 3) + 1 ))
+          done
+
+          # 6. PUSH TO DEFAULT BRANCH
+          git push origin HEAD
